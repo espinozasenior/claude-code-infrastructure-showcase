@@ -40,14 +40,10 @@
     "Stop": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/tsc-check.sh"
-          },
-          {
-            "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/trigger-build-resolver.sh"
-          }
+          // {
+          //   "type": "command",
+          //   "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/tsc-check.sh"
+          // }
         ]
       }
     ]
