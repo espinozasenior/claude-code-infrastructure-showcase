@@ -22,15 +22,11 @@ This skill enforces comprehensive Sentry error tracking and performance monitori
 
 ## Current Status
 
-### Form Service ✅ Complete
+### Form Service 🟡 In Progress
 - Sentry v8 fully integrated
 - All workflow errors tracked
 - SystemActionQueueProcessor instrumented
 - Test endpoints available
-
-### Email Service 🟡 In Progress
-- Phase 1-2 complete (6/22 tasks)
-- 189 ErrorLogger.log() calls remaining
 
 ## Sentry Integration Patterns
 
