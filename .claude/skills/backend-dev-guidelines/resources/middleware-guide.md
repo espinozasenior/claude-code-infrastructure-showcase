@@ -1,4 +1,4 @@
-# Middleware Guide - Express Middleware Patterns
+# Middleware Guide - Hono Middleware Patterns
 
 Complete guide to creating and using middleware in backend microservices.
 
@@ -20,23 +20,33 @@ Complete guide to creating and using middleware in backend microservices.
 **File:** `/form/src/middleware/SSOMiddleware.ts`
 
 ```typescript
+import { createMiddleware } from 'hono/factory';
+import { Context } from 'hono';
+import { getCookie } from 'hono/cookie';
+
 export class SSOMiddlewareClient {
-    static verifyLoginStatus(req: Request, res: Response, next: NextFunction): void {
-        const token = req.cookies.refresh_token;
+    static verifyLoginStatus = createMiddleware<{ Variables: { claims: any, effectiveUserId: string } }>(
+        async (c: Context, next) => {
+            // Get cookie using Hono's getCookie helper
+            const token = getCookie(c, 'refresh_token');
 
-        if (!token) {
-            return res.status(401).json({ error: 'Not authenticated' });
-        }
+            if (!token) {
+                c.status(401);
+                return c.json({ error: 'Not authenticated' });
+            }
 
-        try {
-            const decoded = jwt.verify(token, config.tokens.jwt);
-            res.locals.claims = decoded;
-            res.locals.effectiveUserId = decoded.sub;
-            next();
-        } catch (error) {
-            res.status(401).json({ error: 'Invalid token' });
+            try {
+                const decoded = jwt.verify(token, config.tokens.jwt);
+                c.set('claims', decoded);
+                c.set('effectiveUserId', decoded.sub);
+                // Continue to next middleware/handler
+                await next();
+            } catch (error) {
+                c.status(401);
+                return c.json({ error: 'Invalid token' });
+            }
         }
-    }
+    );
 }
 ```
 
@@ -50,6 +60,8 @@ export class SSOMiddlewareClient {
 
 ```typescript
 import { AsyncLocalStorage } from 'async_hooks';
+import { createMiddleware } from 'hono/factory';
+import { Context } from 'hono';
 
 export interface AuditContext {
     userId: string;
@@ -62,19 +74,24 @@ export interface AuditContext {
 
 export const auditContextStorage = new AsyncLocalStorage<AuditContext>();
 
-export function auditMiddleware(req: Request, res: Response, next: NextFunction): void {
-    const context: AuditContext = {
-        userId: res.locals.effectiveUserId || 'anonymous',
-        userName: res.locals.claims?.preferred_username,
-        impersonatedBy: res.locals.isImpersonating ? res.locals.originalUserId : undefined,
-        timestamp: new Date(),
-        requestId: req.id || uuidv4(),
-    };
+export const auditMiddleware = createMiddleware<{ Variables: { auditContext: AuditContext } }>(
+    async (c: Context, next) => {
+        const context: AuditContext = {
+            userId: c.var.effectiveUserId || 'anonymous',
+            userName: c.var.claims?.preferred_username,
+            impersonatedBy: c.var.isImpersonating ? c.var.originalUserId : undefined,
+            timestamp: new Date(),
+            requestId: c.req.header('x-request-id') || uuidv4(),
+        };
 
-    auditContextStorage.run(context, () => {
-        next();
-    });
-}
+        c.set('auditContext', context);
+        
+        // Also store in AsyncLocalStorage for compatibility with services
+        await auditContextStorage.run(context, async () => {
+            await next();
+        });
+    }
+);
 
 // Getter for current context
 export function getAuditContext(): AuditContext | null {
@@ -86,7 +103,8 @@ export function getAuditContext(): AuditContext | null {
 - Context propagates through entire request
 - No need to pass context through every function
 - Automatically available in services, repositories
-- Type-safe context access
+- Type-safe context access via Hono's typed context variables
+- AsyncLocalStorage for services that need automatic context
 
 **Usage in Services:**
 ```typescript
@@ -107,48 +125,49 @@ async function someOperation() {
 **File:** `/form/src/middleware/errorBoundary.ts`
 
 ```typescript
-export function errorBoundary(
-    error: Error,
-    req: Request,
-    res: Response,
-    next: NextFunction
-): void {
+import { Context } from 'hono';
+import { HTTPException } from 'hono/http-exception';
+import * as Sentry from '@sentry/node';
+
+// Use app.onError for global error handling
+export const errorHandler = (err: Error, c: Context) => {
     // Determine status code
-    const statusCode = getStatusCodeForError(error);
+    const statusCode = getStatusCodeForError(err);
 
     // Capture to Sentry
     Sentry.withScope((scope) => {
         scope.setLevel(statusCode >= 500 ? 'error' : 'warning');
-        scope.setTag('error_type', error.name);
+        scope.setTag('error_type', err.name);
         scope.setContext('error_details', {
-            message: error.message,
-            stack: error.stack,
+            message: err.message,
+            stack: err.stack,
         });
-        Sentry.captureException(error);
+        Sentry.captureException(err);
     });
 
     // User-friendly response
-    res.status(statusCode).json({
+    c.status(statusCode);
+    return c.json({
         success: false,
         error: {
-            message: getUserFriendlyMessage(error),
-            code: error.name,
+            message: getUserFriendlyMessage(err),
+            code: err.name,
         },
         requestId: Sentry.getCurrentScope().getPropagationContext().traceId,
     });
-}
+};
 
-// Async wrapper
-export function asyncErrorWrapper(
-    handler: (req: Request, res: Response, next: NextFunction) => Promise<any>
-) {
-    return async (req: Request, res: Response, next: NextFunction) => {
-        try {
-            await handler(req, res, next);
-        } catch (error) {
-            next(error);
-        }
-    };
+// Usage in app setup:
+// app.onError(errorHandler);
+
+// Alternative: throw HTTPException directly in handlers
+export function throwHttpError(statusCode: number, message: string) {
+    throw new HTTPException(statusCode, {
+        res: new Response(JSON.stringify({ error: message }), {
+            status: statusCode,
+            headers: { 'Content-Type': 'application/json' },
+        }),
+    });
 }
 ```
 
@@ -159,17 +178,25 @@ export function asyncErrorWrapper(
 ### withAuthAndAudit Pattern
 
 ```typescript
-export function withAuthAndAudit(...authMiddleware: any[]) {
-    return [
-        ...authMiddleware,
-        auditMiddleware,
-    ];
+// In Hono, middleware is composed in route definitions directly
+// Usage with multiple middleware
+app.post('/:formID/submit',
+    SSOMiddlewareClient.verifyLoginStatus,
+    auditMiddleware,
+    async (c) => controller.submit(c)
+);
+
+// Or create a helper for common middleware stacks
+export function withAuthAndAudit(
+    ...middlewares: any[]
+) {
+    return [...middlewares, auditMiddleware];
 }
 
 // Usage
-router.post('/:formID/submit',
+app.post('/:formID/submit',
     ...withAuthAndAudit(SSOMiddlewareClient.verifyLoginStatus),
-    async (req, res) => controller.submit(req, res)
+    async (c) => controller.submit(c)
 );
 ```
 
@@ -180,30 +207,46 @@ router.post('/:formID/submit',
 ### Critical Order (Must Follow)
 
 ```typescript
-// 1. Sentry request handler (FIRST)
+import { Hono } from 'hono';
+import { logger } from 'hono/logger';
+import * as Sentry from '@sentry/node';
+import { errorHandler } from './middleware/errorBoundary';
+
+const app = new Hono();
+
+// 1. Global middleware (before routes)
+// - Sentry request handler (FIRST)
 app.use(Sentry.Handlers.requestHandler());
 
-// 2. Body parsing
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// - Request logging middleware
+app.use(logger());
 
-// 3. Cookie parsing
-app.use(cookieParser());
+// - Auth middleware (cookies are auto-parsed by Hono)
+app.use(SSOMiddlewareClient.verifyLoginStatus);
 
-// 4. Auth initialization
-app.use(SSOMiddleware.initialize());
+// - Audit middleware
+app.use(auditMiddleware);
 
-// 5. Routes registered here
-app.use('/api/users', userRoutes);
+// 2. Routes registered here
+app.route('/api/users', userRoutes);
+app.route('/api/posts', postRoutes);
 
-// 6. Error handler (AFTER routes)
-app.use(errorBoundary);
+// 3. Global error handler (catches errors from routes and middleware)
+app.onError(errorHandler);
 
-// 7. Sentry error handler (LAST)
+// 4. Sentry error handler (AFTER onError so we can customize errors)
 app.use(Sentry.Handlers.errorHandler());
 ```
 
-**Rule:** Error handlers MUST be registered AFTER all routes!
+**Key Points:**
+- Hono automatically parses cookies (no separate middleware needed)
+- Hono automatically parses JSON when you call `c.req.json()`
+- Global middleware with `app.use()` applies to all routes
+- Use `app.route()` to mount sub-applications for organized routing
+- Use `app.onError()` for global error handling (called when handler/middleware throws)
+- Middleware runs in order before `await next()`, then in reverse order after
+- No separate body parsing middleware needed in Hono
+- Error handlers are separate from middleware - they catch exceptions
 
 ---
 

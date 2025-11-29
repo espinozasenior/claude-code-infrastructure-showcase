@@ -178,8 +178,11 @@ function errorBoundary(error, req, res, next) {
 
 ## asyncErrorWrapper Utility
 
-### Pattern
+### Pattern (Express)
 
+Note: Hono doesn't require error wrapper middleware since all async errors are automatically caught and processed through the error boundary middleware.
+
+**Express (Old):**
 ```typescript
 export function asyncErrorWrapper(
     handler: (req: Request, res: Response, next: NextFunction) => Promise<any>
@@ -194,20 +197,21 @@ export function asyncErrorWrapper(
 }
 ```
 
-### Usage
+### Hono Pattern (Recommended)
 
 ```typescript
-// Without wrapper - error can be unhandled
-router.get('/users', async (req, res) => {
-    const users = await userService.getAll(); // If throws, unhandled!
-    res.json(users);
+// With Hono - errors are automatically caught
+app.get('/users', async (c) => {
+    try {
+        const users = await userService.getAll();
+        return c.json(users);
+    } catch (error) {
+        // Error is automatically caught by middleware
+        throw error;
+    }
 });
 
-// With wrapper - errors caught
-router.get('/users', asyncErrorWrapper(async (req, res) => {
-    const users = await userService.getAll();
-    res.json(users);
-}));
+// Or use global error boundary middleware (see middleware-guide.md)
 ```
 
 ---

@@ -19,7 +19,7 @@ Real-world examples showing complete implementation patterns.
 
 ```typescript
 // controllers/UserController.ts
-import { Request, Response } from 'express';
+import { Context } from 'hono';
 import { BaseController } from './BaseController';
 import { UserService } from '../services/userService';
 import { createUserSchema, updateUserSchema } from '../validators/userSchemas';
@@ -33,46 +33,46 @@ export class UserController extends BaseController {
         this.userService = new UserService();
     }
 
-    async getUser(req: Request, res: Response): Promise<void> {
+    async getUser(c: Context): Promise<Response> {
         try {
-            this.addBreadcrumb('Fetching user', 'user_controller', {
-                userId: req.params.id,
+            this.logInfo('Fetching user', {
+                userId: c.req.param('id'),
             });
 
             const user = await this.withTransaction(
                 'user.get',
                 'db.query',
-                () => this.userService.findById(req.params.id)
+                () => this.userService.findById(c.req.param('id'))
             );
 
             if (!user) {
                 return this.handleError(
+                    c,
                     new Error('User not found'),
-                    res,
                     'getUser',
                     404
                 );
             }
 
-            this.handleSuccess(res, user);
+            return this.handleSuccess(c, user);
         } catch (error) {
-            this.handleError(error, res, 'getUser');
+            return this.handleError(c, error, 'getUser');
         }
     }
 
-    async listUsers(req: Request, res: Response): Promise<void> {
+    async listUsers(c: Context): Promise<Response> {
         try {
             const users = await this.userService.getAll();
-            this.handleSuccess(res, users);
+            return this.handleSuccess(c, users);
         } catch (error) {
-            this.handleError(error, res, 'listUsers');
+            return this.handleError(c, error, 'listUsers');
         }
     }
 
-    async createUser(req: Request, res: Response): Promise<void> {
+    async createUser(c: Context): Promise<Response> {
         try {
             // Validate input with Zod
-            const validated = createUserSchema.parse(req.body);
+            const validated = createUserSchema.parse(await c.req.json());
 
             // Track performance
             const user = await this.withTransaction(
@@ -81,39 +81,39 @@ export class UserController extends BaseController {
                 () => this.userService.create(validated)
             );
 
-            this.handleSuccess(res, user, 'User created successfully', 201);
+            return this.handleSuccess(c, user, 'User created successfully', 201);  // handleSuccess sets status
         } catch (error) {
             if (error instanceof z.ZodError) {
-                return this.handleError(error, res, 'createUser', 400);
+                return this.handleError(c, error, 'createUser', 400);  // handleError sets status
             }
-            this.handleError(error, res, 'createUser');
+            return this.handleError(c, error, 'createUser');
         }
     }
 
-    async updateUser(req: Request, res: Response): Promise<void> {
+    async updateUser(c: Context): Promise<Response> {
         try {
-            const validated = updateUserSchema.parse(req.body);
+            const validated = updateUserSchema.parse(await c.req.json());
 
             const user = await this.userService.update(
-                req.params.id,
+                c.req.param('id'),
                 validated
             );
 
-            this.handleSuccess(res, user, 'User updated');
+            return this.handleSuccess(c, user, 'User updated');
         } catch (error) {
             if (error instanceof z.ZodError) {
-                return this.handleError(error, res, 'updateUser', 400);
+                return this.handleError(c, error, 'updateUser', 400);
             }
-            this.handleError(error, res, 'updateUser');
+            return this.handleError(c, error, 'updateUser');
         }
     }
 
-    async deleteUser(req: Request, res: Response): Promise<void> {
+    async deleteUser(c: Context): Promise<Response> {
         try {
-            await this.userService.delete(req.params.id);
-            this.handleSuccess(res, null, 'User deleted', 204);
+            await this.userService.delete(c.req.param('id'));
+            return this.handleSuccess(c, null, 'User deleted', 204);
         } catch (error) {
-            this.handleError(error, res, 'deleteUser');
+            return this.handleError(c, error, 'deleteUser');
         }
     }
 }
@@ -208,50 +208,50 @@ export class UserService {
 
 ```typescript
 // routes/userRoutes.ts
-import { Router } from 'express';
+import { Hono } from 'hono';
 import { UserController } from '../controllers/UserController';
 import { SSOMiddlewareClient } from '../middleware/SSOMiddleware';
 import { auditMiddleware } from '../middleware/auditMiddleware';
 
-const router = Router();
+const app = new Hono();
 const controller = new UserController();
 
 // GET /users - List all users
-router.get('/',
+app.get('/',
     SSOMiddlewareClient.verifyLoginStatus,
     auditMiddleware,
-    async (req, res) => controller.listUsers(req, res)
+    async (c) => controller.listUsers(c)
 );
 
 // GET /users/:id - Get single user
-router.get('/:id',
+app.get('/:id',
     SSOMiddlewareClient.verifyLoginStatus,
     auditMiddleware,
-    async (req, res) => controller.getUser(req, res)
+    async (c) => controller.getUser(c)
 );
 
 // POST /users - Create user
-router.post('/',
+app.post('/',
     SSOMiddlewareClient.verifyLoginStatus,
     auditMiddleware,
-    async (req, res) => controller.createUser(req, res)
+    async (c) => controller.createUser(c)
 );
 
 // PUT /users/:id - Update user
-router.put('/:id',
+app.put('/:id',
     SSOMiddlewareClient.verifyLoginStatus,
     auditMiddleware,
-    async (req, res) => controller.updateUser(req, res)
+    async (c) => controller.updateUser(c)
 );
 
 // DELETE /users/:id - Delete user
-router.delete('/:id',
+app.delete('/:id',
     SSOMiddlewareClient.verifyLoginStatus,
     auditMiddleware,
-    async (req, res) => controller.deleteUser(req, res)
+    async (c) => controller.deleteUser(c)
 );
 
-export default router;
+export default app;
 ```
 
 ---
@@ -324,36 +324,38 @@ export class UserRepository {
 
 ```typescript
 // routes/postRoutes.ts (BAD - 200+ lines)
-router.post('/posts', async (req, res) => {
+app.post('/posts', async (c) => {
     try {
-        const username = res.locals.claims.preferred_username;
-        const responses = req.body.responses;
-        const stepInstanceId = req.body.stepInstanceId;
+        const username = c.var.claims.preferred_username;
+        const body = await c.req.json();
+        const responses = body.responses;
+        const stepInstanceId = body.stepInstanceId;
 
         // ❌ Permission check in route
         const userId = await userProfileService.getProfileByEmail(username).then(p => p.id);
         const canComplete = await permissionService.canCompleteStep(userId, stepInstanceId);
         if (!canComplete) {
-            return res.status(403).json({ error: 'No permission' });
+            c.status(403);
+            return c.json({ error: 'No permission' });
         }
 
         // ❌ Business logic in route
         const post = await postRepository.create({
-            title: req.body.title,
-            content: req.body.content,
+            title: body.title,
+            content: body.content,
             authorId: userId
         });
 
         // ❌ More business logic...
-        if (res.locals.isImpersonating) {
+        if (c.var.isImpersonating) {
             impersonationContextStore.storeContext(...);
         }
 
         // ... 100+ more lines
 
-        res.json({ success: true, data: result });
+        return c.json({ success: true, data: result });
     } catch (e) {
-        handler.handleException(res, e);
+        return handler.handleException(c, e);
     }
 });
 ```
@@ -363,19 +365,20 @@ router.post('/posts', async (req, res) => {
 **1. Clean Route:**
 ```typescript
 // routes/postRoutes.ts
+import { Hono } from 'hono';
 import { PostController } from '../controllers/PostController';
 
-const router = Router();
+const app = new Hono();
 const controller = new PostController();
 
 // ✅ CLEAN: 8 lines total!
-router.post('/',
+app.post('/',
     SSOMiddlewareClient.verifyLoginStatus,
     auditMiddleware,
-    async (req, res) => controller.createPost(req, res)
+    async (c) => controller.createPost(c)
 );
 
-export default router;
+export default app;
 ```
 
 **2. Controller:**
@@ -389,20 +392,19 @@ export class PostController extends BaseController {
         this.postService = new PostService();
     }
 
-    async createPost(req: Request, res: Response): Promise<void> {
+    async createPost(c: Context): Promise<Response> {
         try {
-            const validated = createPostSchema.parse({
-                ...req.body,
-            });
+            const body = await c.req.json();
+            const validated = createPostSchema.parse(body);
 
             const result = await this.postService.createPost(
                 validated,
-                res.locals.userId
+                c.var.userId
             );
 
-            this.handleSuccess(res, result, 'Post created successfully');
+            return this.handleSuccess(c, result, 'Post created successfully');
         } catch (error) {
-            this.handleError(error, res, 'createPost');
+            return this.handleError(c, error, 'createPost');
         }
     }
 }

@@ -297,6 +297,7 @@ const completeStepSchema = z.object({
 
 ```typescript
 // routes/proxyRoutes.ts
+import { Hono } from 'hono';
 import { z } from 'zod';
 
 const createProxySchema = z.object({
@@ -306,29 +307,30 @@ const createProxySchema = z.object({
     expiresAt: z.string().datetime(),
 });
 
-router.post(
+app.post(
     '/',
     SSOMiddlewareClient.verifyLoginStatus,
-    async (req, res) => {
+    async (c) => {
         try {
             // Validate at route level
-            const validated = createProxySchema.parse(req.body);
+            const validated = createProxySchema.parse(await c.req.json());
 
             // Delegate to service
             const proxy = await proxyService.createProxyRelationship(validated);
 
-            res.status(201).json({ success: true, data: proxy });
+            c.status(201);
+            return c.json({ success: true, data: proxy });
         } catch (error) {
             if (error instanceof z.ZodError) {
-                return res.status(400).json({
+                return c.json({
                     success: false,
                     error: {
                         message: 'Validation failed',
                         details: error.errors,
                     },
-                });
+                }, 400);
             }
-            handler.handleException(res, error);
+            return handler.handleException(c, error);
         }
     }
 );
@@ -373,7 +375,7 @@ export type UpdateUserDTO = z.infer<typeof updateUserSchema>;
 
 ```typescript
 // controllers/UserController.ts
-import { Request, Response } from 'express';
+import { Context } from 'hono';
 import { BaseController } from './BaseController';
 import { UserService } from '../services/userService';
 import { createUserSchema, updateUserSchema } from '../validators/userSchemas';
@@ -387,38 +389,38 @@ export class UserController extends BaseController {
         this.userService = new UserService();
     }
 
-    async createUser(req: Request, res: Response): Promise<void> {
+    async createUser(c: Context): Promise<Response> {
         try {
             // Validate input
-            const validated = createUserSchema.parse(req.body);
+            const validated = createUserSchema.parse(await c.req.json());
 
             // Call service
             const user = await this.userService.createUser(validated);
 
-            this.handleSuccess(res, user, 'User created successfully', 201);
+            return this.handleSuccess(c, user, 'User created successfully', 201);
         } catch (error) {
             if (error instanceof z.ZodError) {
                 // Handle validation errors with 400 status
-                return this.handleError(error, res, 'createUser', 400);
+                return this.handleError(c, error, 'createUser', 400);
             }
-            this.handleError(error, res, 'createUser');
+            return this.handleError(c, error, 'createUser');
         }
     }
 
-    async updateUser(req: Request, res: Response): Promise<void> {
+    async updateUser(c: Context): Promise<Response> {
         try {
             // Validate params and body
-            const userId = req.params.id;
-            const validated = updateUserSchema.parse(req.body);
+            const userId = c.req.param('id');
+            const validated = updateUserSchema.parse(await c.req.json());
 
             const user = await this.userService.updateUser(userId, validated);
 
-            this.handleSuccess(res, user, 'User updated successfully');
+            return this.handleSuccess(c, user, 'User updated successfully');
         } catch (error) {
             if (error instanceof z.ZodError) {
-                return this.handleError(error, res, 'updateUser', 400);
+                return this.handleError(c, error, 'updateUser', 400);
             }
-            this.handleError(error, res, 'updateUser');
+            return this.handleError(c, error, 'updateUser');
         }
     }
 }
@@ -711,36 +713,42 @@ const userWithoutTimestamps = userSchema.omit({
 
 ```typescript
 // Create reusable validation middleware
-import { Request, Response, NextFunction } from 'express';
+import { Context } from 'hono';
+import { createMiddleware } from 'hono/factory';
 import { z } from 'zod';
 
 export function validateBody<T extends z.ZodType>(schema: T) {
-    return (req: Request, res: Response, next: NextFunction) => {
-        try {
-            req.body = schema.parse(req.body);
-            next();
-        } catch (error) {
-            if (error instanceof z.ZodError) {
-                return res.status(400).json({
-                    success: false,
-                    error: {
-                        message: 'Validation failed',
-                        details: error.errors,
-                    },
-                });
+    return createMiddleware<{ Variables: { validatedBody: unknown } }>(
+        async (c: Context, next) => {
+            try {
+                const body = await c.req.json();
+                const validatedBody = schema.parse(body);
+                c.set('validatedBody', validatedBody);
+                await next();
+            } catch (error) {
+                if (error instanceof z.ZodError) {
+                    return c.json({
+                        success: false,
+                        error: {
+                            message: 'Validation failed',
+                            details: error.errors,
+                        },
+                    }, 400);
+                }
+                throw error;
             }
-            next(error);
         }
-    };
+    );
 }
 
 // Usage
-router.post('/users',
+app.post('/users',
     validateBody(createUserSchema),
-    async (req, res) => {
-        // req.body is validated and typed!
-        const user = await userService.createUser(req.body);
-        res.json({ success: true, data: user });
+    async (c) => {
+        // Access validated body from context
+        const validatedBody = c.var.validatedBody as typeof createUserSchema._type;
+        const user = await userService.createUser(validatedBody);
+        return c.json({ success: true, data: user });
     }
 );
 ```

@@ -1,13 +1,13 @@
 ---
 name: backend-dev-guidelines
-description: Comprehensive backend development guide for Node.js/Express/TypeScript microservices. Use when creating routes, controllers, services, repositories, middleware, or working with Express APIs, Prisma database access, Sentry error tracking, Zod validation, unifiedConfig, dependency injection, or async patterns. Covers layered architecture (routes → controllers → services → repositories), BaseController pattern, error handling, performance monitoring, testing strategies, and migration from legacy patterns.
+description: Comprehensive backend development guide for Node.js/Hono/TypeScript microservices. Use when creating routes, controllers, services, repositories, middleware, or working with Hono APIs, Prisma database access, Sentry error tracking, Zod validation, unifiedConfig, dependency injection, or async patterns. Covers layered architecture (routes → controllers → services → repositories), BaseController pattern, error handling, performance monitoring, testing strategies, and migration from legacy patterns.
 ---
 
 # Backend Development Guidelines
 
 ## Purpose
 
-Establish consistency and best practices across backend microservices (blog-api, auth-service, notifications-service) using modern Node.js/Express/TypeScript patterns.
+Establish consistency and best production grade practices across backend (tetrix-backend) using modern Node.js/Hono/TypeScript patterns and other microservices (Ory Kratos, Ory Hydra, master-agent, receiver) in a docker-compose environment for local development and EKS for staging and production.
 
 ## When to Use This Skill
 
@@ -81,13 +81,13 @@ service/src/
 ├── services/            # Business logic
 ├── repositories/        # Data access
 ├── routes/              # Route definitions
-├── middleware/          # Express middleware
+├── middleware/          # Hono middleware
 ├── types/               # TypeScript types
 ├── validators/          # Zod schemas
 ├── utils/               # Utilities
 ├── tests/               # Tests
 ├── instrument.ts        # Sentry (FIRST IMPORT)
-├── app.ts               # Express setup
+├── app.ts               # Hono setup
 └── server.ts            # HTTP server
 ```
 
@@ -105,24 +105,24 @@ service/src/
 
 ```typescript
 // ❌ NEVER: Business logic in routes
-router.post('/submit', async (req, res) => {
+app.post('/submit', async (c) => {
     // 200 lines of logic
 });
 
 // ✅ ALWAYS: Delegate to controller
-router.post('/submit', (req, res) => controller.submit(req, res));
+app.post('/submit', (c) => controller.submit(c));
 ```
 
 ### 2. All Controllers Extend BaseController
 
 ```typescript
 export class UserController extends BaseController {
-    async getUser(req: Request, res: Response): Promise<void> {
+    async getUser(c: Context): Promise<Response> {
         try {
-            const user = await this.userService.findById(req.params.id);
-            this.handleSuccess(res, user);
+            const user = await this.userService.findById(c.req.param('id'));
+            return this.handleSuccess(c, user);
         } catch (error) {
-            this.handleError(error, res, 'getUser');
+            return this.handleError(c, error, 'getUser');
         }
     }
 }
@@ -179,8 +179,10 @@ describe('UserService', () => {
 ## Common Imports
 
 ```typescript
-// Express
-import express, { Request, Response, NextFunction, Router } from 'express';
+// Hono
+import { Hono, Context } from 'hono';
+import { createMiddleware } from 'hono/factory';
+import { HTTPException } from 'hono/http-exception';
 
 // Validation
 import { z } from 'zod';

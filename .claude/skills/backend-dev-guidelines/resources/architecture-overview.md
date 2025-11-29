@@ -407,13 +407,13 @@ router.post('/users',
 
 **Controller:**
 ```typescript
-async create(req: Request, res: Response): Promise<void> {
+async create(c: Context): Promise<Response> {
     try {
-        const validated = createUserSchema.parse(req.body);
+        const validated = createUserSchema.parse(await c.req.json());
         const user = await this.userService.create(validated);
-        this.handleSuccess(res, user, 'User created');
+        return this.handleSuccess(c, user, 'User created');
     } catch (error) {
-        this.handleError(error, res, 'create');
+        return this.handleError(c, error, 'create');
     }
 }
 ```

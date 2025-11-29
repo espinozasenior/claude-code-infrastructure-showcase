@@ -34,34 +34,34 @@ Complete guide to clean route definitions and controller patterns.
 
 ```typescript
 // routes/userRoutes.ts
-import { Router } from 'express';
+import { Hono } from 'hono';
 import { UserController } from '../controllers/UserController';
 import { SSOMiddlewareClient } from '../middleware/SSOMiddleware';
 import { auditMiddleware } from '../middleware/auditMiddleware';
 
-const router = Router();
+const app = new Hono();
 const controller = new UserController();
 
 // ✅ CLEAN: Route definition only
-router.get('/:id',
+app.get('/:id',
     SSOMiddlewareClient.verifyLoginStatus,
     auditMiddleware,
-    async (req, res) => controller.getUser(req, res)
+    async (c) => controller.getUser(c)
 );
 
-router.post('/',
+app.post('/',
     SSOMiddlewareClient.verifyLoginStatus,
     auditMiddleware,
-    async (req, res) => controller.createUser(req, res)
+    async (c) => controller.createUser(c)
 );
 
-router.put('/:id',
+app.put('/:id',
     SSOMiddlewareClient.verifyLoginStatus,
     auditMiddleware,
-    async (req, res) => controller.updateUser(req, res)
+    async (c) => controller.updateUser(c)
 );
 
-export default router;
+export default app;
 ```
 
 **Key Points:**
@@ -69,6 +69,7 @@ export default router;
 - No try-catch needed (controller handles errors)
 - Clean, readable, maintainable
 - Easy to see all endpoints at a glance
+- Use `c` (Context) instead of separate `req, res` objects
 
 ---
 
@@ -90,22 +91,23 @@ export default router;
 
 ```typescript
 import * as Sentry from '@sentry/node';
-import { Response } from 'express';
+import { Context } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 
 export abstract class BaseController {
     /**
      * Handle errors with Sentry integration
      */
     protected handleError(
+        c: Context,
         error: unknown,
-        res: Response,
         context: string,
         statusCode = 500
-    ): void {
+    ): Response {
         Sentry.withScope((scope) => {
             scope.setTag('controller', this.constructor.name);
             scope.setTag('operation', context);
-            scope.setUser({ id: res.locals?.claims?.userId });
+            scope.setUser({ id: c.var?.claims?.userId });
 
             if (error instanceof Error) {
                 scope.setContext('error_details', {
@@ -117,7 +119,8 @@ export abstract class BaseController {
             Sentry.captureException(error);
         });
 
-        res.status(statusCode).json({
+        c.status(statusCode);
+        return c.json({
             success: false,
             error: {
                 message: error instanceof Error ? error.message : 'An error occurred',
@@ -130,12 +133,13 @@ export abstract class BaseController {
      * Handle success responses
      */
     protected handleSuccess<T>(
-        res: Response,
+        c: Context,
         data: T,
         message?: string,
         statusCode = 200
-    ): void {
-        res.status(statusCode).json({
+    ): Response {
+        c.status(statusCode);
+        return c.json({
             success: true,
             message,
             data,
@@ -160,9 +164,9 @@ export abstract class BaseController {
      * Validate required fields
      */
     protected validateRequest(
+        c: Context,
         required: string[],
-        actual: Record<string, any>,
-        res: Response
+        actual: Record<string, any>
     ): boolean {
         const missing = required.filter((field) => !actual[field]);
 
@@ -172,15 +176,16 @@ export abstract class BaseController {
                 'warning'
             );
 
-            res.status(400).json({
-                success: false,
-                error: {
-                    message: 'Missing required fields',
-                    code: 'VALIDATION_ERROR',
-                    details: { missing },
-                },
+            throw new HTTPException(400, {
+                res: c.json({
+                    success: false,
+                    error: {
+                        message: 'Missing required fields',
+                        code: 'VALIDATION_ERROR',
+                        details: { missing },
+                    },
+                }),
             });
-            return false;
         }
         return true;
     }
@@ -229,7 +234,7 @@ export abstract class BaseController {
 
 ```typescript
 // controllers/UserController.ts
-import { Request, Response } from 'express';
+import { Context } from 'hono';
 import { BaseController } from './BaseController';
 import { UserService } from '../services/userService';
 import { createUserSchema } from '../validators/userSchemas';
@@ -242,31 +247,31 @@ export class UserController extends BaseController {
         this.userService = new UserService();
     }
 
-    async getUser(req: Request, res: Response): Promise<void> {
+    async getUser(c: Context): Promise<Response> {
         try {
-            this.addBreadcrumb('Fetching user', 'user_controller', { userId: req.params.id });
+            this.logInfo('Fetching user', { userId: c.req.param('id') });
 
-            const user = await this.userService.findById(req.params.id);
+            const user = await this.userService.findById(c.req.param('id'));
 
             if (!user) {
                 return this.handleError(
+                    c,
                     new Error('User not found'),
-                    res,
                     'getUser',
                     404
                 );
             }
 
-            this.handleSuccess(res, user);
+            return this.handleSuccess(c, user);
         } catch (error) {
-            this.handleError(error, res, 'getUser');
+            return this.handleError(c, error, 'getUser');
         }
     }
 
-    async createUser(req: Request, res: Response): Promise<void> {
+    async createUser(c: Context): Promise<Response> {
         try {
             // Validate input
-            const validated = createUserSchema.parse(req.body);
+            const validated = createUserSchema.parse(await c.req.json());
 
             // Track performance
             const user = await this.withTransaction(
@@ -275,19 +280,19 @@ export class UserController extends BaseController {
                 () => this.userService.create(validated)
             );
 
-            this.handleSuccess(res, user, 'User created successfully', 201);
+            return this.handleSuccess(c, user, 'User created successfully', 201);
         } catch (error) {
-            this.handleError(error, res, 'createUser');
+            return this.handleError(c, error, 'createUser');
         }
     }
 
-    async updateUser(req: Request, res: Response): Promise<void> {
+    async updateUser(c: Context): Promise<Response> {
         try {
-            const validated = updateUserSchema.parse(req.body);
-            const user = await this.userService.update(req.params.id, validated);
-            this.handleSuccess(res, user, 'User updated');
+            const validated = updateUserSchema.parse(await c.req.json());
+            const user = await this.userService.update(c.req.param('id'), validated);
+            return this.handleSuccess(c, user, 'User updated');
         } catch (error) {
-            this.handleError(error, res, 'updateUser');
+            return this.handleError(c, error, 'updateUser');
         }
     }
 }
@@ -309,30 +314,30 @@ export class UserController extends BaseController {
 **File:** `/email/src/routes/notificationRoutes.ts`
 
 ```typescript
-import { Router } from 'express';
+import { Hono } from 'hono';
 import { NotificationController } from '../controllers/NotificationController';
 import { SSOMiddlewareClient } from '../middleware/SSOMiddleware';
 
-const router = Router();
+const app = new Hono();
 const controller = new NotificationController();
 
 // ✅ EXCELLENT: Clean delegation
-router.get('/',
+app.get('/',
     SSOMiddlewareClient.verifyLoginStatus,
-    async (req, res) => controller.getNotifications(req, res)
+    async (c) => controller.getNotifications(c)
 );
 
-router.post('/',
+app.post('/',
     SSOMiddlewareClient.verifyLoginStatus,
-    async (req, res) => controller.createNotification(req, res)
+    async (c) => controller.createNotification(c)
 );
 
-router.put('/:id/read',
+app.put('/:id/read',
     SSOMiddlewareClient.verifyLoginStatus,
-    async (req, res) => controller.markAsRead(req, res)
+    async (c) => controller.markAsRead(c)
 );
 
-export default router;
+export default app;
 ```
 
 **What Makes This Excellent:**
@@ -346,6 +351,7 @@ export default router;
 **File:** `/form/src/routes/proxyRoutes.ts`
 
 ```typescript
+import { Hono } from 'hono';
 import { z } from 'zod';
 
 const createProxySchema = z.object({
@@ -355,15 +361,16 @@ const createProxySchema = z.object({
     expiresAt: z.string().datetime(),
 });
 
-router.post('/',
+app.post('/',
     SSOMiddlewareClient.verifyLoginStatus,
-    async (req, res) => {
+    async (c) => {
         try {
-            const validated = createProxySchema.parse(req.body);
+            const validated = createProxySchema.parse(await c.req.json());
             const proxy = await proxyService.createProxyRelationship(validated);
-            res.status(201).json({ success: true, data: proxy });
+            c.status(201);
+            return c.json({ success: true, data: proxy });
         } catch (error) {
-            handler.handleException(res, error);
+            return handler.handleException(c, error);
         }
     }
 );
@@ -389,17 +396,19 @@ router.post('/',
 
 ```typescript
 // ❌ ANTI-PATTERN: 200+ lines of business logic in route
-router.post('/:formID/submit', async (req: Request, res: Response) => {
+app.post('/:formID/submit', async (c) => {
     try {
-        const username = res.locals.claims.preferred_username;
-        const responses = req.body.responses;
-        const stepInstanceId = req.body.stepInstanceId;
+        const username = c.var.claims.preferred_username;
+        const body = await c.req.json();
+        const responses = body.responses;
+        const stepInstanceId = body.stepInstanceId;
 
         // ❌ Permission checking in route
         const userId = await userProfileService.getProfileByEmail(username).then(p => p.id);
         const canComplete = await permissionService.canCompleteStep(userId, stepInstanceId);
         if (!canComplete) {
-            return res.status(403).json({ error: 'No permission' });
+            c.status(403);
+            return c.json({ error: 'No permission' });
         }
 
         // ❌ Workflow logic in route
@@ -414,9 +423,9 @@ router.post('/:formID/submit', async (req: Request, res: Response) => {
         const events = await engine.executeCommand(command);
 
         // ❌ Impersonation handling in route
-        if (res.locals.isImpersonating) {
+        if (c.var.isImpersonating) {
             impersonationContextStore.storeContext(stepInstanceId, {
-                originalUserId: res.locals.originalUserId,
+                originalUserId: c.var.originalUserId,
                 effectiveUserId: userId,
             });
         }
@@ -432,9 +441,9 @@ router.post('/:formID/submit', async (req: Request, res: Response) => {
 
         // ... 100+ more lines of business logic
 
-        res.json({ success: true, data: result });
+        return c.json({ success: true, data: result });
     } catch (e) {
-        handler.handleException(res, e);
+        return handler.handleException(c, e);
     }
 });
 ```

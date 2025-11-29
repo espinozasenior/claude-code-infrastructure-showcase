@@ -119,18 +119,18 @@ Sentry.setContext('runtime', {
 
 ```typescript
 // Use BaseController.handleError
-protected handleError(error: unknown, res: Response, context: string, statusCode = 500): void {
+protected handleError(c: Context, error: unknown, context: string, statusCode = 500): Response {
     Sentry.withScope((scope) => {
         scope.setTag('controller', this.constructor.name);
         scope.setTag('operation', context);
-        scope.setUser({ id: res.locals?.claims?.userId });
+        scope.setUser({ id: c.var?.claims?.userId });
         Sentry.captureException(error);
     });
 
-    res.status(statusCode).json({
+    return c.json({
         success: false,
         error: { message: error instanceof Error ? error.message : 'Error occurred' }
-    });
+    }, statusCode);
 }
 ```
 
