@@ -63,13 +63,8 @@
             },
             "fileTriggers": {
                 "pathPatterns": [
-                    "blog-api/src/**/*.ts",
-                    "auth-service/src/**/*.ts",
-                    "notifications-service/src/**/*.ts",
-                    "backend/**/*.ts",
-                    "api/**/*.ts",
-                    "server/**/*.ts",
-                    "services/**/*.ts"
+                    "src/**/*.ts",
+                    "scripts/**/*.ts"
                 ],
                 "pathExclusions": [
                     "**/*.test.ts",
@@ -161,14 +156,14 @@
                     "route testing",
                     "API testing",
                     "authenticated route",
-                    "JWT testing",
+                    "Kratos authentication testing",
                     "cookie auth",
                     "test with auth"
                 ],
                 "intentPatterns": [
                     "(test|debug|verify).*?(route|endpoint|API)",
                     "(how to|how do I).*?test.*?(route|endpoint|API)",
-                    "test.*?(authenticated|auth|JWT|cookie)"
+                    "test.*?(authenticated|auth|Kratos|cookie)"
                 ]
             },
             "fileTriggers": {
@@ -233,7 +228,7 @@
             "low": "Optional - Trigger only for explicit matches"
         },
         "customization": {
-            "pathPatterns": "Adjust to match your project structure (blog-api, auth-service, etc.)",
+            "pathPatterns": "Adjust to match your project structure",
             "keywords": "Add domain-specific terms relevant to your project",
             "intentPatterns": "Use regex for flexible user intent matching"
         }

@@ -42,10 +42,6 @@ detect_repo() {
 
     # Common project directory patterns
     case "$repo" in
-        # Frontend variations
-        frontend|client|web|app|ui)
-            echo "$repo"
-            ;;
         # Backend variations
         backend|server|api|src|services)
             echo "$repo"
@@ -53,16 +49,6 @@ detect_repo() {
         # Database
         database|prisma|migrations)
             echo "$repo"
-            ;;
-        # Package/monorepo structure
-        packages)
-            # For monorepos, get the package name
-            local package=$(echo "$relative_path" | cut -d'/' -f2)
-            if [[ -n "$package" ]]; then
-                echo "packages/$package"
-            else
-                echo "$repo"
-            fi
             ;;
         # Examples directory
         examples)
