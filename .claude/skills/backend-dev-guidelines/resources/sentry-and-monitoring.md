@@ -332,5 +332,6 @@ async function good() {
 
 **Related Files:**
 - [SKILL.md](SKILL.md)
+- [sentry-nodejs-typescript-guidelines.md](sentry-nodejs-typescript-guidelines.md)
 - [routing-and-controllers.md](routing-and-controllers.md)
 - [async-and-errors.md](async-and-errors.md)
