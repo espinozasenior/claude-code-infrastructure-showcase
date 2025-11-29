@@ -101,8 +101,11 @@ prisma\.                         # prisma.something
 ### Controllers/Routes
 ```regex
 export class.*Controller         # Controller classes
-router\.                         # Express router
-app\.(get|post|put|delete|patch) # Express app routes
+app\.(get|post|put|delete|patch) # Hono app routes
+app\.(use|route)                 # Hono app methods
+createMiddleware                 # Hono middleware factory
+c\.(json|text|html|status)       # Hono response methods
+c\.req\.(param|query|json)       # Hono request methods
 ```
 
 ### Error Handling
