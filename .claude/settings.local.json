@@ -1,8 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(for file in /root/git/claude-code-infrastructure-showcase/.claude/skills/frontend-dev-guidelines/resources/*.md)",
-      "Bash(done)"
+      "Bash(for file in $CLAUDE_PROJECT_DIR/.claude/skills/frontend-dev-guidelines/resources/*.md)",
+      "Bash(done)",
+      "SlashCommand(for file in $CLAUDE_PROJECT_DIR/.claude/commands/*.md)",
+      "Bash(mkdir:*)"
     ],
     "deny": [],
     "ask": []
